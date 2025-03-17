@@ -1,8 +1,55 @@
 from flask import Flask, request, redirect, url_for
 import os
+import pandas as pd
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+
+def analyze_csv(file_path):
+    try:
+        # Read the CSV file
+        df = pd.read_csv(file_path)
+        
+        # Check if "Change %" column exists
+        if 'Change %' not in df.columns:
+            return "No 'Change %' column found in the CSV file."
+        
+        # Convert percentage strings to float numbers
+        df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
+        
+        total_count = len(df['Change %'].dropna())
+        if total_count == 0:
+            return "No valid data found in the Change % column."
+        
+        # Calculate positive and negative percentages
+        positive_count = len(df[df['Change %'] > 0]['Change %'].dropna())
+        negative_count = len(df[df['Change %'] < 0]['Change %'].dropna())
+        neutral_count = len(df[df['Change %'] == 0]['Change %'].dropna())
+        
+        positive_percent = (positive_count / total_count) * 100
+        negative_percent = (negative_count / total_count) * 100
+        neutral_percent = (neutral_count / total_count) * 100
+        
+        # Calculate average positive and negative changes
+        avg_positive_change = df[df['Change %'] > 0]['Change %'].mean()
+        avg_negative_change = df[df['Change %'] < 0]['Change %'].mean()
+        
+        return f"""
+Analysis Results:
+----------------
+Distribution of Changes:
+Positive Days: {round(positive_percent, 2)}% ({positive_count} days)
+Negative Days: {round(negative_percent, 2)}% ({negative_count} days)
+Neutral Days: {round(neutral_percent, 2)}% ({neutral_count} days)
+
+Average Changes:
+Average Positive Change: {round(avg_positive_change, 2)}%
+Average Negative Change: {round(avg_negative_change, 2)}%
+
+Total Days Analyzed: {total_count}
+"""
+    except Exception as e:
+        return f"Error analyzing file: {str(e)}"
 
 @app.route('/')
 def index():
@@ -27,8 +74,14 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(file_path)
         # Call the analysis function here
-        (file_path)
-        return 'File successfully uploaded and analyzed!'
+        result = analyze_csv(file_path)
+        return f'''
+        <h1>Analysis Results</h1>
+        <pre>{result}</pre>
+        <p><a href="/">Upload another file</a></p>
+        '''
 
 if __name__ == '__main__':
+    # Create uploads directory if it doesn't exist
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     app.run(debug=True)
