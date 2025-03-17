@@ -1,0 +1,25 @@
+@app.route('/')
+def index():
+    return '''
+    <!doctype html>
+    <title>Upload CSV File</title>
+    <h1>Upload CSV File</h1>
+    <form method=post enctype=multipart/form-data>
+      <input type=file name=file>
+      <input type=submit value=Upload>
+    </form>
+    '''
+
+@app.route('/', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return redirect(request.url)
+    file = request.files['file']
+    if file.filename == '':
+        return redirect(request.url)
+    if file:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        file.save(file_path)
+        # Call the analysis function here
+        analyze_csv(file_path)
+        return 'File successfully uploaded and analyzed!'
