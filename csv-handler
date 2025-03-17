@@ -66,19 +66,71 @@ def analyze_csv(file_path):
             week_negative_days = len(week_data[week_data['Change %'] < 0])
             week_neutral_days = len(week_data[week_data['Change %'] == 0])
             
-            # Calculate weekly change by summing all daily changes
-            week_change = week_data['Change %'].sum()
+            # Calculate average positive and negative changes for the week
+            week_avg_positive = week_data[week_data['Change %'] > 0]['Change %'].mean() if len(week_data[week_data['Change %'] > 0]) > 0 else 0
+            week_avg_negative = week_data[week_data['Change %'] < 0]['Change %'].mean() if len(week_data[week_data['Change %'] < 0]) > 0 else 0
             
-            # Find highest and lowest points
-            week_highest = week_data['High'].max()
-            week_lowest = week_data['Low'].min()
+            # Find best and worst days
+            best_day_idx = week_data['Change %'].idxmax()
+            worst_day_idx = week_data['Change %'].idxmin()
+            best_day = {
+                'date': week_data.loc[best_day_idx, 'Date'].strftime('%A, %d/%m/%Y'),
+                'change': week_data.loc[best_day_idx, 'Change %']
+            }
+            worst_day = {
+                'date': week_data.loc[worst_day_idx, 'Date'].strftime('%A, %d/%m/%Y'),
+                'change': week_data.loc[worst_day_idx, 'Change %']
+            }
             
-            # Most volatile day in the week
+            # Calculate weekly streak
+            week_changes = week_data['Change %'].values
+            week_dates = week_data['Date'].dt.strftime('%A, %d/%m/%Y').values
+            current_week_streak = 1
+            max_week_streak = 1
+            week_streak_type = 'positive' if week_changes[0] > 0 else 'negative'
+            week_streak_start = week_dates[0]
+            week_streak_end = week_dates[0]
+            current_week_start = week_dates[0]
+            
+            for i in range(1, len(week_changes)):
+                if (week_changes[i] > 0 and week_changes[i-1] > 0) or (week_changes[i] < 0 and week_changes[i-1] < 0):
+                    current_week_streak += 1
+                    if current_week_streak > max_week_streak:
+                        max_week_streak = current_week_streak
+                        week_streak_type = 'positive' if week_changes[i] > 0 else 'negative'
+                        week_streak_start = current_week_start
+                        week_streak_end = week_dates[i]
+                else:
+                    current_week_streak = 1
+                    current_week_start = week_dates[i]
+            
+            # Find highest and lowest points with specific days
+            highest_idx = week_data['High'].idxmax()
+            lowest_idx = week_data['Low'].idxmin()
+            week_highest_day = week_data.loc[highest_idx, 'Date'].strftime('%A, %d/%m/%Y')
+            week_lowest_day = week_data.loc[lowest_idx, 'Date'].strftime('%A, %d/%m/%Y')
+            
+            # Calculate daily range for most volatile day
             week_data['Abs_Change'] = week_data['Change %'].abs()
             most_volatile_idx = week_data['Abs_Change'].idxmax()
             most_volatile_date = week_data.loc[most_volatile_idx, 'Date'].strftime('%A, %d/%m/%Y')
             most_volatile_change = week_data.loc[most_volatile_idx, 'Change %']
+            most_volatile_high = week_data.loc[most_volatile_idx, 'High']
+            most_volatile_low = week_data.loc[most_volatile_idx, 'Low']
+            most_volatile_range = most_volatile_high - most_volatile_low
             
+            # Calculate weekly change by summing all daily changes
+            week_change = week_data['Change %'].sum()
+            
+            # Generate daily breakdown
+            daily_breakdown = ""
+            for _, day in week_data.iterrows():
+                daily_range_points = day['High'] - day['Low']
+                daily_range_percent = (daily_range_points / day['Low']) * 100
+                daily_breakdown += f"\n  {day['Date'].strftime('%A')}: Change: {round(day['Change %'], 2)}%, "
+                daily_breakdown += f"Range: {round(daily_range_percent, 2)}% (${daily_range_points:,.2f}), "
+                daily_breakdown += f"High: ${day['High']:,.2f}, Low: ${day['Low']:,.2f}"
+
             weekly_analysis.append({
                 'week_id': week_id,
                 'start_date': week_data.iloc[-1]['Date'].strftime('%d/%m/%Y'),
@@ -87,11 +139,25 @@ def analyze_csv(file_path):
                 'positive_days': week_positive_days,
                 'negative_days': week_negative_days,
                 'neutral_days': week_neutral_days,
-                'highest_point': week_highest,
-                'lowest_point': week_lowest,
+                'highest_point': week_data['High'].max(),
+                'lowest_point': week_data['Low'].min(),
+                'highest_day': week_highest_day,
+                'lowest_day': week_lowest_day,
                 'most_volatile_day': most_volatile_date,
                 'most_volatile_change': most_volatile_change,
-                'trading_days': len(week_data)
+                'most_volatile_range': most_volatile_range,
+                'trading_days': len(week_data),
+                'week_avg_positive': week_avg_positive,
+                'week_avg_negative': week_avg_negative,
+                'best_day': best_day,
+                'worst_day': worst_day,
+                'week_streak': {
+                    'length': max_week_streak,
+                    'type': week_streak_type,
+                    'start': week_streak_start,
+                    'end': week_streak_end
+                },
+                'daily_breakdown': daily_breakdown
             })
 
         # Calculate longest streak (keeping existing code)
@@ -143,8 +209,13 @@ Week {week['week_id']} ({week['end_date']} to {week['start_date']}):
 Trading Days: {week['trading_days']}
 Weekly Change: {round(week['week_change'], 2)}%
 Distribution: {week['positive_days']} positive, {week['negative_days']} negative, {week['neutral_days']} neutral days
-Price Range: High ${week['highest_point']:,.2f} - Low ${week['lowest_point']:,.2f}
-Most Volatile: {week['most_volatile_day']} ({round(week['most_volatile_change'], 2)}% change)
+Average Changes: Positive {round(week['week_avg_positive'], 2)}%, Negative {round(week['week_avg_negative'], 2)}%
+Best Day: {week['best_day']['date']} ({round(week['best_day']['change'], 2)}%)
+Worst Day: {week['worst_day']['date']} ({round(week['worst_day']['change'], 2)}%)
+Weekly Streak: {week['week_streak']['length']} days ({week['week_streak']['type']}) from {week['week_streak']['start']} to {week['week_streak']['end']}
+Price Range: High ${week['highest_point']:,.2f} ({week['highest_day']}) - Low ${week['lowest_point']:,.2f} ({week['lowest_day']}) [Range: ${round(week['highest_point'] - week['lowest_point'], 2):,.2f}]
+Most Volatile: {week['most_volatile_day']} ({round(week['most_volatile_change'], 2)}% change, range: ${round(week['most_volatile_range'], 2)})
+Daily Breakdown:{week['daily_breakdown']}
 """
 
         output += f"\nTotal Days Analyzed: {total_count}"
