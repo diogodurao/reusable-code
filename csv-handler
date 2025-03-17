@@ -14,8 +14,19 @@ def analyze_csv(file_path):
         if 'Change %' not in df.columns:
             return "No 'Change %' column found in the CSV file."
         
+        # Convert dates to datetime and create day of week column
+        df['Date'] = pd.to_datetime(df['Date'])
+        df['Day_of_Week'] = df['Date'].dt.strftime('%A')  # Full day name
+        
+        # Filter out weekends (only keep Monday-Friday)
+        df = df[df['Date'].dt.dayofweek < 5]  # 0=Monday, 4=Friday
+        
         # Convert percentage strings to float numbers
         df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
+        # Remove commas from price columns and convert to float
+        df['Price'] = df['Price'].str.replace(',', '').astype('float')
+        df['High'] = df['High'].str.replace(',', '').astype('float')
+        df['Low'] = df['Low'].str.replace(',', '').astype('float')
         
         total_count = len(df['Change %'].dropna())
         if total_count == 0:
@@ -33,11 +44,86 @@ def analyze_csv(file_path):
         # Calculate average positive and negative changes
         avg_positive_change = df[df['Change %'] > 0]['Change %'].mean()
         avg_negative_change = df[df['Change %'] < 0]['Change %'].mean()
+
+        # Weekly Analysis
+        # Create a week number for each date (Monday as start of week)
+        df['Week_Number'] = df['Date'].dt.isocalendar().week
+        df['Year'] = df['Date'].dt.isocalendar().year
         
-        return f"""
+        # Create unique week identifier (year + week number)
+        df['Week_ID'] = df['Year'].astype(str) + '-' + df['Week_Number'].astype(str)
+        
+        # Group data by weeks
+        weekly_groups = df.groupby('Week_ID')
+        
+        weekly_analysis = []
+        
+        for week_id, week_data in weekly_groups:
+            week_data = week_data.sort_values('Date')  # Ensure data is sorted by date
+            
+            # Calculate weekly metrics
+            week_positive_days = len(week_data[week_data['Change %'] > 0])
+            week_negative_days = len(week_data[week_data['Change %'] < 0])
+            week_neutral_days = len(week_data[week_data['Change %'] == 0])
+            
+            # Calculate weekly change by summing all daily changes
+            week_change = week_data['Change %'].sum()
+            
+            # Find highest and lowest points
+            week_highest = week_data['High'].max()
+            week_lowest = week_data['Low'].min()
+            
+            # Most volatile day in the week
+            week_data['Abs_Change'] = week_data['Change %'].abs()
+            most_volatile_idx = week_data['Abs_Change'].idxmax()
+            most_volatile_date = week_data.loc[most_volatile_idx, 'Date'].strftime('%A, %d/%m/%Y')
+            most_volatile_change = week_data.loc[most_volatile_idx, 'Change %']
+            
+            weekly_analysis.append({
+                'week_id': week_id,
+                'start_date': week_data.iloc[-1]['Date'].strftime('%d/%m/%Y'),
+                'end_date': week_data.iloc[0]['Date'].strftime('%d/%m/%Y'),
+                'week_change': week_change,
+                'positive_days': week_positive_days,
+                'negative_days': week_negative_days,
+                'neutral_days': week_neutral_days,
+                'highest_point': week_highest,
+                'lowest_point': week_lowest,
+                'most_volatile_day': most_volatile_date,
+                'most_volatile_change': most_volatile_change,
+                'trading_days': len(week_data)
+            })
+
+        # Calculate longest streak (keeping existing code)
+        changes = df['Change %'].values
+        dates = df['Date'].dt.strftime('%A, %d/%m/%Y').values
+        current_streak = 1
+        max_streak = 1
+        streak_type = 'positive' if changes[0] > 0 else 'negative'
+        streak_start_date = dates[0]
+        streak_end_date = dates[0]
+        current_start_date = dates[0]
+        
+        for i in range(1, len(changes)):
+            if (changes[i] > 0 and changes[i-1] > 0) or (changes[i] < 0 and changes[i-1] < 0):
+                current_streak += 1
+                if current_streak > max_streak:
+                    max_streak = current_streak
+                    streak_type = 'positive' if changes[i] > 0 else 'negative'
+                    streak_end_date = current_start_date
+                    streak_start_date = dates[i]
+            else:
+                current_streak = 1
+                current_start_date = dates[i]
+
+        # Sort weekly analysis from newest to oldest using the start_date
+        weekly_analysis.sort(key=lambda x: pd.to_datetime(x['end_date'], format='%d/%m/%Y'), reverse=True)
+
+        # Generate the output
+        output = f"""
 Analysis Results:
 ----------------
-Distribution of Changes:
+Overall Distribution:
 Positive Days: {round(positive_percent, 2)}% ({positive_count} days)
 Negative Days: {round(negative_percent, 2)}% ({negative_count} days)
 Neutral Days: {round(neutral_percent, 2)}% ({neutral_count} days)
@@ -46,8 +132,24 @@ Average Changes:
 Average Positive Change: {round(avg_positive_change, 2)}%
 Average Negative Change: {round(avg_negative_change, 2)}%
 
-Total Days Analyzed: {total_count}
+Longest Streak: {max_streak} days ({streak_type}) from {streak_start_date} to {streak_end_date}
+
+Weekly Breakdown:
+----------------"""
+
+        for week in weekly_analysis:
+            output += f"""
+Week {week['week_id']} ({week['end_date']} to {week['start_date']}):
+Trading Days: {week['trading_days']}
+Weekly Change: {round(week['week_change'], 2)}%
+Distribution: {week['positive_days']} positive, {week['negative_days']} negative, {week['neutral_days']} neutral days
+Price Range: High ${week['highest_point']:,.2f} - Low ${week['lowest_point']:,.2f}
+Most Volatile: {week['most_volatile_day']} ({round(week['most_volatile_change'], 2)}% change)
 """
+
+        output += f"\nTotal Days Analyzed: {total_count}"
+        return output
+
     except Exception as e:
         return f"Error analyzing file: {str(e)}"
 
