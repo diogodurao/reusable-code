@@ -1,0 +1,7 @@
+def perform_analysis(file_path):
+    # Load the CSV file
+    data = pd.read_csv(file_path)
+
+    # Assuming the CSV has columns: 'Date', 'Open', 'High', 'Low', 'Close'
+    data['Date'] = pd.to_datetime(data['Date'])
+    data['Change'] = data['Close'].pct_change() * 100
