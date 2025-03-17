@@ -1,5 +1,8 @@
-import Flask
+from flask import Flask, request, redirect, url_for
 import os
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'uploads'
 
 @app.route('/')
 def index():
@@ -24,5 +27,8 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(file_path)
         # Call the analysis function here
-        analyze_csv(file_path)
+        (file_path)
         return 'File successfully uploaded and analyzed!'
+
+if __name__ == '__main__':
+    app.run(debug=True)
