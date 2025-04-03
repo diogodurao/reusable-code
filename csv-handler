@@ -132,31 +132,26 @@ def analyze_csv(file_path):
                 daily_breakdown += f"High: ${day['High']:,.2f}, Low: ${day['Low']:,.2f}"
 
             weekly_analysis.append({
-                'week_id': week_id,
-                'start_date': week_data.iloc[-1]['Date'].strftime('%d/%m/%Y'),
-                'end_date': week_data.iloc[0]['Date'].strftime('%d/%m/%Y'),
-                'week_change': week_change,
+                'start_date': week_data.iloc[0]['Date'].strftime('%d/%m/%Y'),
+                'end_date': week_data.iloc[-1]['Date'].strftime('%d/%m/%Y'),
+                'total_days': len(week_data),
                 'positive_days': week_positive_days,
                 'negative_days': week_negative_days,
                 'neutral_days': week_neutral_days,
-                'highest_point': week_data['High'].max(),
-                'lowest_point': week_data['Low'].min(),
-                'highest_day': week_highest_day,
-                'lowest_day': week_lowest_day,
+                'avg_positive': week_avg_positive,
+                'avg_negative': week_avg_negative,
+                'best_day': best_day,
+                'worst_day': worst_day,
+                'highest_point': {'price': week_data['High'].max(), 'date': week_highest_day},
+                'lowest_point': {'price': week_data['Low'].min(), 'date': week_lowest_day},
                 'most_volatile_day': most_volatile_date,
                 'most_volatile_change': most_volatile_change,
                 'most_volatile_range': most_volatile_range,
-                'trading_days': len(week_data),
-                'week_avg_positive': week_avg_positive,
-                'week_avg_negative': week_avg_negative,
-                'best_day': best_day,
-                'worst_day': worst_day,
-                'week_streak': {
-                    'length': max_week_streak,
-                    'type': week_streak_type,
-                    'start': week_streak_start,
-                    'end': week_streak_end
-                },
+                'week_change': week_change,
+                'max_streak': max_week_streak,
+                'streak_type': week_streak_type,
+                'streak_start': week_streak_start,
+                'streak_end': week_streak_end,
                 'daily_breakdown': daily_breakdown
             })
 
@@ -182,47 +177,65 @@ def analyze_csv(file_path):
                 current_streak = 1
                 current_start_date = dates[i]
 
-        # Sort weekly analysis from newest to oldest using the start_date
+        # Sort weekly analysis from newest to oldest using the end_date
         weekly_analysis.sort(key=lambda x: pd.to_datetime(x['end_date'], format='%d/%m/%Y'), reverse=True)
 
-        # Generate the output
+        # Generate the output string for overall results
         output = f"""
-Analysis Results:
-----------------
+Analysis Results ({df['Date'].min().strftime('%d/%m/%Y')} - {df['Date'].max().strftime('%d/%m/%Y')} | {total_count} Trading Days):
+==================================================
 Overall Distribution:
-Positive Days: {round(positive_percent, 2)}% ({positive_count} days)
-Negative Days: {round(negative_percent, 2)}% ({negative_count} days)
-Neutral Days: {round(neutral_percent, 2)}% ({neutral_count} days)
+  Positive Days: {round(positive_percent, 2)}% ({positive_count} days)
+  Negative Days: {round(negative_percent, 2)}% ({negative_count} days)
+  Neutral Days:  {round(neutral_percent, 2)}% ({neutral_count} days)
 
 Average Changes:
-Average Positive Change: {round(avg_positive_change, 2)}%
-Average Negative Change: {round(avg_negative_change, 2)}%
+  Average Positive Change: {round(avg_positive_change, 2) if not pd.isna(avg_positive_change) else 'N/A'}%
+  Average Negative Change: {round(avg_negative_change, 2) if not pd.isna(avg_negative_change) else 'N/A'}%
 
-Longest Streak: {max_streak} days ({streak_type}) from {streak_start_date} to {streak_end_date}
+Longest Overall Streak:
+  {max_streak} days ({streak_type}) from {streak_start_date} to {streak_end_date}
+
+Overall High/Low:
+  Highest Price: {df.loc[df['High'].idxmax(), 'High']} on {df.loc[df['High'].idxmax(), 'Date'].strftime('%A, %d/%m/%Y')}
+  Lowest Price:  {df.loc[df['Low'].idxmin(), 'Low']} on {df.loc[df['Low'].idxmin(), 'Date'].strftime('%A, %d/%m/%Y')}
 
 Weekly Breakdown:
-----------------"""
+================"""
 
-        for week in weekly_analysis:
+        # Append weekly breakdown details
+        for week_info in weekly_analysis:
             output += f"""
-Week {week['week_id']} ({week['end_date']} to {week['start_date']}):
-Trading Days: {week['trading_days']}
-Weekly Change: {round(week['week_change'], 2)}%
-Distribution: {week['positive_days']} positive, {week['negative_days']} negative, {week['neutral_days']} neutral days
-Average Changes: Positive {round(week['week_avg_positive'], 2)}%, Negative {round(week['week_avg_negative'], 2)}%
-Best Day: {week['best_day']['date']} ({round(week['best_day']['change'], 2)}%)
-Worst Day: {week['worst_day']['date']} ({round(week['worst_day']['change'], 2)}%)
-Weekly Streak: {week['week_streak']['length']} days ({week['week_streak']['type']}) from {week['week_streak']['start']} to {week['week_streak']['end']}
-Price Range: High ${week['highest_point']:,.2f} ({week['highest_day']}) - Low ${week['lowest_point']:,.2f} ({week['lowest_day']}) [Range: ${round(week['highest_point'] - week['lowest_point'], 2):,.2f}]
-Most Volatile: {week['most_volatile_day']} ({round(week['most_volatile_change'], 2)}% change, range: ${round(week['most_volatile_range'], 2)})
-Daily Breakdown:{week['daily_breakdown']}
+
+Week: {week_info['start_date']} - {week_info['end_date']} ({week_info['total_days']} Trading Days)
+--------------------------------------
+  Distribution:
+    Positive Days: {week_info['positive_days']}
+    Negative Days: {week_info['negative_days']}
+    Neutral Days:  {week_info['neutral_days']}
+  Average Changes:
+    Avg Positive: {round(week_info['avg_positive'], 2) if not pd.isna(week_info['avg_positive']) else 'N/A'}%
+    Avg Negative: {round(week_info['avg_negative'], 2) if not pd.isna(week_info['avg_negative']) else 'N/A'}%
+  Best/Worst Days:
+    Best:  {round(week_info['best_day']['change'], 2)}% on {week_info['best_day']['date']}
+    Worst: {round(week_info['worst_day']['change'], 2)}% on {week_info['worst_day']['date']}
+  High/Low Points:
+    Highest: {week_info['highest_point']['price']} on {week_info['highest_point']['date']}
+    Lowest:  {week_info['lowest_point']['price']} on {week_info['lowest_point']['date']}
+  Longest Streak:
+    {week_info['max_streak']} days ({week_info['streak_type']}) from {week_info['streak_start']} to {week_info['streak_end']}
+  Most Volatile Day:
+    {week_info['most_volatile_day']} with a change of {round(week_info['most_volatile_change'], 2)}% and a range of ${week_info['most_volatile_range']:,.2f}
+  Weekly Change:
+    {round(week_info['week_change'], 2)}%
+  Daily Breakdown:
+{week_info['daily_breakdown']}
 """
 
-        output += f"\nTotal Days Analyzed: {total_count}"
         return output
 
-    except Exception as e:
-        return f"Error analyzing file: {str(e)}"
+    except FileNotFoundError:
+        return "Error: File not found."
 
 @app.route('/')
 def index():
