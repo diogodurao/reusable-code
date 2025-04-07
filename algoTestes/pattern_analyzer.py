@@ -37,10 +37,7 @@ def analyze_patterns(df):
     consecutive_weeks_analysis = analyze_consecutive_weeks(weekly_changes)
     results['consecutive_weeks'] = consecutive_weeks_analysis
     
-    # 2. Day of Week Analysis
-    df['Day_of_Week'] = df['Date'].dt.day_name()
-    day_of_week_analysis = analyze_day_of_week(df)
-    results['day_of_week'] = day_of_week_analysis
+    # Day of Week Analysis has been removed
     
     # 3. Monthly Analysis
     df['Month'] = df['Date'].dt.month
@@ -51,10 +48,7 @@ def analyze_patterns(df):
     volatility_analysis = analyze_volatility_clustering(df)
     results['volatility'] = volatility_analysis
     
-    # 5. Price Level Analysis (if price data is available)
-    if 'Price' in df.columns and 'High' in df.columns and 'Low' in df.columns:
-        price_level_analysis = analyze_price_levels(df)
-        results['price_levels'] = price_level_analysis
+    # Price Level Analysis has been removed
     
     return results
 
@@ -73,52 +67,75 @@ def analyze_consecutive_weeks(weekly_changes):
     # Get the list of weekly changes
     changes = weekly_changes['Change %'].values
     
-    # Initialize counters for different streak lengths
-    streak_stats = {
-        'positive': defaultdict(lambda: {'count': 0, 'next_positive': 0, 'next_negative': 0, 'next_avg_change': []}),
-        'negative': defaultdict(lambda: {'count': 0, 'next_positive': 0, 'next_negative': 0, 'next_avg_change': []})
-    }
+    # Initialize data structures for tracking streaks and outcomes
+    streaks = []
+    current_streak = {'type': None, 'length': 0, 'start_idx': 0}
     
-    # Track current streak
-    current_streak = {'type': None, 'length': 0}
-    
-    # Analyze each week (except the last one since we need to know the next week)
-    for i in range(len(changes) - 1):
+    # First pass: identify all streaks
+    for i in range(len(changes)):
         current_change = changes[i]
-        next_change = changes[i + 1]
         
         # Determine streak type and length
         if current_change > 0:
             if current_streak['type'] == 'positive':
                 current_streak['length'] += 1
             else:
-                current_streak = {'type': 'positive', 'length': 1}
+                # End previous streak if it exists
+                if current_streak['type'] is not None and current_streak['length'] > 0:
+                    streaks.append(current_streak)
+                # Start new positive streak
+                current_streak = {'type': 'positive', 'length': 1, 'start_idx': i}
         elif current_change < 0:
             if current_streak['type'] == 'negative':
                 current_streak['length'] += 1
             else:
-                current_streak = {'type': 'negative', 'length': 1}
+                # End previous streak if it exists
+                if current_streak['type'] is not None and current_streak['length'] > 0:
+                    streaks.append(current_streak)
+                # Start new negative streak
+                current_streak = {'type': 'negative', 'length': 1, 'start_idx': i}
         else:  # current_change == 0
-            current_streak = {'type': None, 'length': 0}
-            continue
+            # End previous streak if it exists
+            if current_streak['type'] is not None and current_streak['length'] > 0:
+                streaks.append(current_streak)
+            # Reset streak (neutral weeks break streaks)
+            current_streak = {'type': None, 'length': 0, 'start_idx': i+1}
+    
+    # Add the last streak if it exists
+    if current_streak['type'] is not None and current_streak['length'] > 0:
+        streaks.append(current_streak)
+    
+    # Initialize counters for different streak lengths
+    streak_stats = {
+        'positive': defaultdict(lambda: {'count': 0, 'next_positive': 0, 'next_negative': 0, 'next_avg_change': []}),
+        'negative': defaultdict(lambda: {'count': 0, 'next_positive': 0, 'next_negative': 0, 'next_avg_change': []})
+    }
+    
+    # Second pass: analyze what happens after each streak
+    for streak in streaks:
+        streak_type = streak['type']
+        streak_length = streak['length']
+        end_idx = streak['start_idx'] + streak_length - 1
         
-        # Record what happens after this streak
-        if current_streak['type'] is not None:
-            streak_type = current_streak['type']
-            streak_length = min(current_streak['length'], 5)  # Cap at 5 for statistical significance
+        # Check if there's a next week after this streak
+        if end_idx + 1 < len(changes):
+            next_change = changes[end_idx + 1]
             
-            streak_stats[streak_type][streak_length]['count'] += 1
+            # Only count the maximum streak length for each streak
+            # This ensures we don't double-count shorter streaks within longer ones
+            length = min(streak_length, 10)  # Cap at 10 for analysis
+            streak_stats[streak_type][length]['count'] += 1
             
             if next_change > 0:
-                streak_stats[streak_type][streak_length]['next_positive'] += 1
+                streak_stats[streak_type][length]['next_positive'] += 1
             elif next_change < 0:
-                streak_stats[streak_type][streak_length]['next_negative'] += 1
-                
-            streak_stats[streak_type][streak_length]['next_avg_change'].append(next_change)
+                streak_stats[streak_type][length]['next_negative'] += 1
+            
+            streak_stats[streak_type][length]['next_avg_change'].append(next_change)
     
     # Calculate probabilities and average changes
     for streak_type in ['positive', 'negative']:
-        for streak_length in range(1, 6):  # Analyze streaks of length 1 to 5
+        for streak_length in range(1, 11):  # Analyze streaks of length 1 to 10
             stats = streak_stats[streak_type][streak_length]
             
             if stats['count'] > 0:
@@ -138,99 +155,7 @@ def analyze_consecutive_weeks(weekly_changes):
     
     return results
 
-def analyze_day_of_week(df):
-    """
-    Analyze patterns for each day of the week.
-    
-    Parameters:
-    df (pandas.DataFrame): DataFrame with daily data
-    
-    Returns:
-    dict: Statistics about each day of the week
-    """
-    results = {}
-    
-    # Ensure we have the day of week
-    if 'Day_of_Week' not in df.columns:
-        df['Day_of_Week'] = df['Date'].dt.day_name()
-    
-    # Calculate statistics for each day
-    day_stats = df.groupby('Day_of_Week')['Change %'].agg([
-        ('mean', 'mean'),
-        ('median', 'median'),
-        ('std', 'std'),
-        ('positive', lambda x: (x > 0).mean() * 100),
-        ('negative', lambda x: (x < 0).mean() * 100),
-        ('count', 'count')
-    ])
-    
-    # Calculate day-to-day transitions (e.g., what happens Tuesday after a positive Monday)
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    day_transitions = {}
-    
-    for i in range(len(day_order) - 1):
-        current_day = day_order[i]
-        next_day = day_order[i + 1]
-        
-        # Get indices for the current day
-        current_day_indices = df[df['Day_of_Week'] == current_day].index
-        
-        for idx in current_day_indices:
-            if idx + 1 in df.index and df.loc[idx + 1, 'Day_of_Week'] == next_day:
-                current_change = df.loc[idx, 'Change %']
-                next_change = df.loc[idx + 1, 'Change %']
-                
-                key = f"{current_day}_to_{next_day}"
-                if key not in day_transitions:
-                    day_transitions[key] = {
-                        'after_positive': {'count': 0, 'next_positive': 0, 'avg_change': []},
-                        'after_negative': {'count': 0, 'next_positive': 0, 'avg_change': []}
-                    }
-                
-                if current_change > 0:
-                    day_transitions[key]['after_positive']['count'] += 1
-                    if next_change > 0:
-                        day_transitions[key]['after_positive']['next_positive'] += 1
-                    day_transitions[key]['after_positive']['avg_change'].append(next_change)
-                elif current_change < 0:
-                    day_transitions[key]['after_negative']['count'] += 1
-                    if next_change > 0:
-                        day_transitions[key]['after_negative']['next_positive'] += 1
-                    day_transitions[key]['after_negative']['avg_change'].append(next_change)
-    
-    # Calculate transition probabilities
-    transition_results = {}
-    for key, transitions in day_transitions.items():
-        transition_results[key] = {}
-        
-        for condition, stats in transitions.items():
-            if stats['count'] > 0:
-                prob_positive = (stats['next_positive'] / stats['count']) * 100
-                avg_change = sum(stats['avg_change']) / len(stats['avg_change']) if stats['avg_change'] else 0
-                
-                transition_results[key][condition] = {
-                    'count': stats['count'],
-                    'prob_positive': round(prob_positive, 2),
-                    'avg_change': round(avg_change, 2)
-                }
-    
-    # Format day stats for return
-    day_results = {}
-    for day in day_order:
-        if day in day_stats.index:
-            day_results[day] = {
-                'mean_change': round(day_stats.loc[day, 'mean'], 2),
-                'median_change': round(day_stats.loc[day, 'median'], 2),
-                'std_change': round(day_stats.loc[day, 'std'], 2),
-                'positive_pct': round(day_stats.loc[day, 'positive'], 2),
-                'negative_pct': round(day_stats.loc[day, 'negative'], 2),
-                'count': int(day_stats.loc[day, 'count'])
-            }
-    
-    return {
-        'day_stats': day_results,
-        'transitions': transition_results
-    }
+
 
 def analyze_monthly_patterns(df):
     """
@@ -375,52 +300,7 @@ def analyze_volatility_clustering(df):
     
     return results
 
-def analyze_price_levels(df):
-    """
-    Analyze patterns at different price levels.
-    
-    Parameters:
-    df (pandas.DataFrame): DataFrame with price data
-    
-    Returns:
-    dict: Statistics about price level patterns
-    """
-    results = {}
-    
-    # Define price ranges (quartiles)
-    price_min = df['Price'].min()
-    price_max = df['Price'].max()
-    price_range = price_max - price_min
-    
-    q1 = price_min + price_range * 0.25
-    q2 = price_min + price_range * 0.5
-    q3 = price_min + price_range * 0.75
-    
-    # Categorize each day by price level
-    df['Price_Level'] = pd.cut(
-        df['Price'],
-        bins=[price_min - 0.01, q1, q2, q3, price_max + 0.01],
-        labels=['Bottom 25%', '25-50%', '50-75%', 'Top 25%']
-    )
-    
-    # Calculate statistics for each price level
-    level_stats = df.groupby('Price_Level')['Change %'].agg([
-        ('mean', 'mean'),
-        ('positive', lambda x: (x > 0).mean() * 100),
-        ('negative', lambda x: (x < 0).mean() * 100),
-        ('count', 'count')
-    ])
-    
-    # Format results
-    for level in level_stats.index:
-        results[str(level)] = {
-            'mean_change': round(level_stats.loc[level, 'mean'], 2),
-            'positive_pct': round(level_stats.loc[level, 'positive'], 2),
-            'negative_pct': round(level_stats.loc[level, 'negative'], 2),
-            'count': int(level_stats.loc[level, 'count'])
-        }
-    
-    return results
+
 
 def format_pattern_results(results):
     """
@@ -432,75 +312,45 @@ def format_pattern_results(results):
     Returns:
     str: Formatted string with analysis results
     """
-    output = """
-Pattern Analysis Report
-======================
 
+    output = """
+<h>Pattern Analysis Report</h>
 """
-    
     # 1. Consecutive Weeks Analysis
     output += "Consecutive Weeks Patterns:\n"
     output += "===========================\n"
     
     if 'consecutive_weeks' in results:
-        for streak_length in range(1, 6):
-            # After positive streaks
-            key = f"{streak_length}_positive"
-            if key in results['consecutive_weeks']:
-                stats = results['consecutive_weeks'][key]
-                output += f"After {streak_length} consecutive positive {'week' if streak_length == 1 else 'weeks'} ({stats['count']} occurrences):\n"
-                output += f"  Probability of next week positive: {stats['prob_next_positive']}%\n"
-                output += f"  Probability of next week negative: {stats['prob_next_negative']}%\n"
-                output += f"  Average change in the next week: {stats['avg_next_change']}%\n\n"
+        # First, collect all streak patterns that have at least one occurrence
+        valid_patterns = []
+        for streak_length in range(1, 11):  # Analyze streaks of length 1 to 10
+            pos_key = f"{streak_length}_positive"
+            neg_key = f"{streak_length}_negative"
             
-            # After negative streaks
-            key = f"{streak_length}_negative"
-            if key in results['consecutive_weeks']:
-                stats = results['consecutive_weeks'][key]
-                output += f"After {streak_length} consecutive negative {'week' if streak_length == 1 else 'weeks'} ({stats['count']} occurrences):\n"
-                output += f"  Probability of next week positive: {stats['prob_next_positive']}%\n"
-                output += f"  Probability of next week negative: {stats['prob_next_negative']}%\n"
-                output += f"  Average change in the next week: {stats['avg_next_change']}%\n\n"
-    
-    # 2. Day of Week Analysis
-    output += "Day of Week Patterns:\n"
-    output += "====================\n"
-    
-    if 'day_of_week' in results and 'day_stats' in results['day_of_week']:
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            if pos_key in results['consecutive_weeks']:
+                valid_patterns.append((streak_length, 'positive'))
+            if neg_key in results['consecutive_weeks']:
+                valid_patterns.append((streak_length, 'negative'))
         
-        for day in day_order:
-            if day in results['day_of_week']['day_stats']:
-                stats = results['day_of_week']['day_stats'][day]
-                output += f"{day}:\n"
-                output += f"  Mean change: {stats['mean_change']}%\n"
-                output += f"  Positive days: {stats['positive_pct']}%\n"
-                output += f"  Negative days: {stats['negative_pct']}%\n"
-                output += f"  Sample size: {stats['count']} days\n\n"
-        
-        # Day transitions
-        if 'transitions' in results['day_of_week']:
-            output += "Day-to-Day Transitions:\n"
+        if valid_patterns:
+            # Create a table header
+            output += "| STREAK PATTERN                | OCCURRENCES | NEXT WEEK AVG CHANGE |\n"
+            output += "|-------------------------------|------------|---------------------|\n"
             
-            for i in range(len(day_order) - 1):
-                current_day = day_order[i]
-                next_day = day_order[i + 1]
-                key = f"{current_day}_to_{next_day}"
+            # Display each valid pattern
+            for streak_length, streak_type in valid_patterns:
+                key = f"{streak_length}_{streak_type}"
+                stats = results['consecutive_weeks'][key]
                 
-                if key in results['day_of_week']['transitions']:
-                    transitions = results['day_of_week']['transitions'][key]
-                    
-                    if 'after_positive' in transitions:
-                        stats = transitions['after_positive']
-                        output += f"After positive {current_day} ({stats['count']} occurrences):\n"
-                        output += f"  Probability of positive {next_day}: {stats['prob_positive']}%\n"
-                        output += f"  Average change on {next_day}: {stats['avg_change']}%\n\n"
-                    
-                    if 'after_negative' in transitions:
-                        stats = transitions['after_negative']
-                        output += f"After negative {current_day} ({stats['count']} occurrences):\n"
-                        output += f"  Probability of positive {next_day}: {stats['prob_positive']}%\n"
-                        output += f"  Average change on {next_day}: {stats['avg_change']}%\n\n"
+                pattern_name = f"{streak_length} consecutive {streak_type} {'week' if streak_length == 1 else 'weeks'}"
+                occurrences = stats['count']
+                avg_change = stats['avg_next_change']
+                
+                output += f"| {pattern_name:<29} | {occurrences:^10} | {avg_change:^19.2f}% |\n"
+            
+            output += "|-------------------------------|------------|---------------------|\n"
+        else:
+            output += "No consecutive week patterns found in the data.\n"
     
     # 3. Monthly Patterns
     output += "Monthly Patterns:\n"
@@ -541,20 +391,6 @@ Pattern Analysis Report
             output += f"  Average positive change: {stats['avg_positive_change']}%\n"
             output += f"  Average negative change: {stats['avg_negative_change']}%\n\n"
     
-    # 5. Price Level Analysis
-    output += "Price Level Patterns:\n"
-    output += "====================\n"
-    
-    if 'price_levels' in results:
-        level_order = ['Bottom 25%', '25-50%', '50-75%', 'Top 25%']
-        
-        for level in level_order:
-            if level in results['price_levels']:
-                stats = results['price_levels'][level]
-                output += f"{level}:\n"
-                output += f"  Mean change: {stats['mean_change']}%\n"
-                output += f"  Positive days: {stats['positive_pct']}%\n"
-                output += f"  Negative days: {stats['negative_pct']}%\n"
-                output += f"  Sample size: {stats['count']} days\n\n"
+    # Price Level Analysis section has been removed
     
     return output

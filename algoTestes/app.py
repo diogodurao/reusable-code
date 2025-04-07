@@ -1,8 +1,9 @@
-
-from flask import Flask, request, redirect, render_template_string
+from flask import Flask, request, redirect, render_template, url_for
 import pandas as pd
 import os
 import pattern_analyzer
+import index_base_pattern
+import avg_range
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -23,12 +24,19 @@ def analyze_csv(file_path):
         # Filter out weekends (only keep Monday-Friday)
         df = df[df['Date'].dt.dayofweek < 5]  # 0=Monday, 4=Friday
         
-        # Convert percentage strings to float numbers
-        df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
-        # Remove commas from price columns and convert to float
-        df['Price'] = df['Price'].str.replace(',', '').astype('float')
-        df['High'] = df['High'].str.replace(',', '').astype('float')
-        df['Low'] = df['Low'].str.replace(',', '').astype('float')
+        # Convert percentage strings to float numbers if they are strings
+        if df['Change %'].dtype == object:  # Check if it's a string type
+            df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
+        
+        # Process price columns if they exist
+        for col in ['Price', 'High', 'Low']:
+            if col in df.columns:
+                # Check if the column is string type before applying string methods
+                if df[col].dtype == object:  # String type
+                    df[col] = df[col].str.replace(',', '').astype('float')
+                elif not pd.api.types.is_float_dtype(df[col]):
+                    # If it's not already float, convert it
+                    df[col] = df[col].astype('float')
         
         total_count = len(df['Change %'].dropna())
         if total_count == 0:
@@ -57,6 +65,8 @@ def analyze_csv(file_path):
         
         # Group data by weeks
         weekly_groups = df.groupby('Week_ID')
+        
+
         
         weekly_analysis = []
         
@@ -323,9 +333,8 @@ Weekly Patterns:
   Strong Negative Weeks (<-2% change): {patterns['weekly']['strong_negative_weeks']}
   Weak Negative Weeks (>-2% change): {patterns['weekly']['weak_negative_weeks']}
 
-Weekly Breakdown:
+<b>Weekly Breakdown:</b> 
 ================"""
-
         # Append weekly breakdown details
         for week_info in weekly_analysis:
             output += f"""
@@ -385,10 +394,48 @@ def upload_file():
         # Call the analysis function here
         result = analyze_csv(file_path)
         return f'''
-        <h1>Analysis Results</h1>
-        <pre>{result}</pre>
-        <p><a href="/patterns/{file.filename}">View Advanced Pattern Analysis</a></p>
-        <p><a href="/">Upload another file</a></p>
+        <style>
+            body {{
+                margin: 0;
+                font-family: Arial, sans-serif;
+            }}
+            .container {{
+                display: flex;
+            }}
+            .sidebar {{
+                width: 250px;
+                background-color: #f8f9fa;
+                padding: 20px;
+                height: 100vh;
+            }}
+            .content {{
+                flex: 1;
+                padding: 20px;
+            }}
+            .nav-link {{
+                display: block;
+                padding: 10px 0;
+                color: #333;
+                text-decoration: none;
+            }}
+            .nav-link.active {{
+                color: #0066cc;
+                font-weight: bold;
+            }}
+        </style>
+        <div class="container">
+            <div class="sidebar">
+                <h3>Navigation</h3>
+                <a href="/patterns/{file.filename}" class="nav-link active">Advanced Pattern Analysis</a>
+                <a href="/index-base-pattern/{file.filename}" class="nav-link">Index Base Pattern</a>
+                <a href="/avg-range/{file.filename}" class="nav-link">Average Range Analysis</a>
+                <a href="/" class="nav-link">Upload New File</a>
+            </div>
+            <div class="content">
+                <h1>Analysis Results</h1>
+                <pre>{result}</pre>
+            </div>
+        </div>
         '''
 
 @app.route('/patterns/<filename>')
@@ -411,13 +458,18 @@ def pattern_analysis(filename):
         df['Date'] = pd.to_datetime(df['Date'])
         
         # Convert percentage strings to float numbers if needed
-        if isinstance(df['Change %'].iloc[0], str):
+        if df['Change %'].dtype == object:  # Check if it's a string type
             df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
         
-        # Convert price columns to float if they exist and are strings
+        # Convert price columns to float if they exist
         for col in ['Price', 'High', 'Low']:
-            if col in df.columns and isinstance(df[col].iloc[0], str):
-                df[col] = df[col].str.replace(',', '').astype('float')
+            if col in df.columns:
+                # Check if the column is string type before applying string methods
+                if df[col].dtype == object:  # String type
+                    df[col] = df[col].str.replace(',', '').astype('float')
+                elif not pd.api.types.is_float_dtype(df[col]):
+                    # If it's not already float, convert it
+                    df[col] = df[col].astype('float')
         
         # Run the pattern analysis
         pattern_results = pattern_analyzer.analyze_patterns(df)
@@ -443,6 +495,7 @@ def pattern_analysis(filename):
             <div class="container">
                 <h1>Advanced Pattern Analysis for {filename}</h1>
                 <p><a href="/">← Back to Upload</a></p>
+                <p><a href="javascript:history.back()">← Back to Previous Analysis</a></p>
                 <pre>{formatted_results}</pre>
             </div>
         </body>
@@ -451,6 +504,172 @@ def pattern_analysis(filename):
     
     except Exception as e:
         return f"Error analyzing patterns: {str(e)}"
+
+@app.route('/index-base-pattern/<filename>')
+def index_base_pattern_upload(filename):
+    """Upload and analyze an index base pattern file in relation to the primary file."""
+    primary_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    
+    if not os.path.exists(primary_file_path):
+        return "Primary file not found. Please upload the primary file first."
+    
+    return f'''
+    <!doctype html>
+    <html>
+    <head>
+        <title>Index Base Pattern Analysis</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+            .container {{ max-width: 1200px; margin: 0 auto; }}
+            form {{ margin: 20px 0; padding: 20px; background-color: #f8f9fa; border-radius: 5px; }}
+            label {{ display: block; margin-bottom: 10px; font-weight: bold; }}
+            input[type="file"] {{ margin-bottom: 15px; }}
+            input[type="submit"] {{ padding: 8px 16px; background-color: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; }}
+            .back-link {{ margin-bottom: 20px; }}
+            .back-link a {{ color: #0066cc; text-decoration: none; }}
+            .back-link a:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="back-link">
+                <a href="javascript:history.back()">← Back to Previous Analysis</a>
+            </div>
+            <h1>Upload Index Base Pattern File</h1>
+            <p>Select an index base pattern CSV file to analyze in relation to {filename}.</p>
+            <form action="/analyze-index-base/{filename}" method="post" enctype="multipart/form-data">
+                <label for="file">Choose Index Base Pattern CSV File:</label>
+                <input type="file" name="file" id="file" accept=".csv" required>
+                <input type="submit" value="Analyze">
+            </form>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.route('/analyze-index-base/<primary_filename>', methods=['POST'])
+def analyze_index_base(primary_filename):
+    """Analyze the relationship between the primary file and the uploaded index base pattern file."""
+    if 'file' not in request.files:
+        return redirect(request.url)
+    
+    index_base_file = request.files['file']
+    if index_base_file.filename == '':
+        return redirect(request.url)
+    
+    primary_file_path = os.path.join(app.config['UPLOAD_FOLDER'], primary_filename)
+    if not os.path.exists(primary_file_path):
+        return "Primary file not found. Please upload the primary file first."
+    
+    try:
+        # Save the index base pattern file
+        index_base_filename = f"index_base_{index_base_file.filename}"
+        index_base_path = os.path.join(app.config['UPLOAD_FOLDER'], index_base_filename)
+        index_base_file.save(index_base_path)
+        
+        # Read the primary CSV file
+        primary_df = pd.read_csv(primary_file_path)
+        
+        # Ensure required columns exist in primary_df
+        if 'Open' not in primary_df.columns:
+            return "Required column 'Open' not found in the primary CSV file."
+        
+        # Convert price columns to float if they exist in primary_df
+        if 'Open' in primary_df.columns and primary_df['Open'].dtype == object:
+            primary_df['Open'] = primary_df['Open'].str.replace(',', '').astype('float')
+        
+        # Read the index base pattern CSV file
+        index_base_df = pd.read_csv(index_base_path)
+        
+        # Ensure required columns exist in index_base_df
+        required_columns = ['Open', 'Low', 'High', 'Price']
+        missing_columns = [col for col in required_columns if col not in index_base_df.columns]
+        if missing_columns:
+            return f"Required columns {', '.join(missing_columns)} not found in the index base pattern CSV file."
+        
+        # Convert price columns to float if they exist in index_base_df
+        for col in required_columns:
+            if col in index_base_df.columns and index_base_df[col].dtype == object:
+                index_base_df[col] = index_base_df[col].str.replace(',', '').astype('float')
+        
+        # Run the index base pattern analysis
+        analysis_results = index_base_pattern.analyze_index_base_pattern(primary_df, index_base_df)
+        
+        # Format the results
+        formatted_results = index_base_pattern.format_index_base_results(analysis_results)
+        
+        return f'''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Index Base Pattern Analysis</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Index Base Pattern Analysis</h1>
+                <div>{formatted_results}</div>
+            </div>
+        </body>
+        </html>
+        '''
+    
+    except Exception as e:
+        return f"Error analyzing index base pattern: {str(e)}"
+
+@app.route('/avg-range/<filename>')
+def avg_range_analysis(filename):
+    """Display average range analysis for the uploaded file."""
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if not os.path.exists(file_path):
+        return "File not found. Please upload the file first."
+    
+    try:
+        # Read the CSV file
+        df = pd.read_csv(file_path)
+        
+        # Check if "Change %" column exists
+        if 'Change %' not in df.columns:
+            return "No 'Change %' column found in the CSV file."
+        
+        # Convert dates to datetime
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'])
+        
+        # Convert percentage strings to float numbers if they are strings
+        if df['Change %'].dtype == object:  # Check if it's a string type
+            df['Change %'] = df['Change %'].str.rstrip('%').astype('float')
+        
+        # Run the average range analysis
+        analysis_results = avg_range.analyze_avg_range(df)
+        
+        # Format the results
+        formatted_results = avg_range.format_avg_range_results(analysis_results)
+        
+        return f'''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Average Range Analysis</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Average Range Analysis</h1>
+                <div>{formatted_results}</div>
+            </div>
+        </body>
+        </html>
+        '''
+    
+    except Exception as e:
+        return f"Error analyzing average range: {str(e)}"
 
 if __name__ == '__main__':
     # Create uploads directory if it doesn't exist
